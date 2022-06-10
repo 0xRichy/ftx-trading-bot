@@ -1,0 +1,9 @@
+[functions."trading"]
+  schedule = "* * * * *"
+
+[template.environment]
+  MARKET_SYMBOL = "Futures market symbol (ex: ETH-PERP)"
+  ACCOUNT_NAME = "Subaccount name (optional)"
+  API_KEY = "Your FTX API key"
+  API_SECRET = "Your FTX API secret"
+  ORDER_SIZE = "Long/short order size (ex: 0.1)"

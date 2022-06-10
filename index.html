@@ -1,0 +1,262 @@
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FTX trading bot — Strategy tester</title>
+  <style>
+    body {
+      background: #111;
+      font-size: 12px;
+      font-family: sans-serif;
+      color: rgba(255, 255, 255, 0.9);
+      margin: 20px 0 30px;
+    }
+
+    span {
+      position: absolute;
+      letter-spacing: 2;
+      z-index: 2;
+      top: 20px;
+      left: 60px;
+      right: 50px;
+    }
+  </style>
+  <!-- <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/ccxt@1.86.93/dist/ccxt.browser.js"></script> -->
+  <script src="https://cdn.jsdelivr.net/npm/technicalindicators@3.1.0/dist/browser.es6.js"></script>
+</head>
+
+<body>
+  <span>Loading the Strategy tester...</span>
+
+  <!-- <div class="tradingview-widget-container">
+    <div id="tradingview_c7fb0"></div>
+    <div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/symbols/ETHPERP/?exchange=FTX"
+        rel="noopener" target="_blank"><span class="blue-text">ETHPERP Chart</span></a> by TradingView</div>
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script type="text/javascript">
+      const widget = new TradingView.widget(
+        {
+          "width": 1400,
+          "height": 600,
+          // "autosize": true,
+          "symbol": "FTX:ETHPERP",
+          "interval": "1",
+          "timezone": "Etc/UTC",
+          "theme": "light",
+          "style": "1",
+          "locale": "en",
+          "toolbar_bg": "#f1f3f6",
+          "enable_publishing": false,
+          "withdateranges": true,
+          "hide_side_toolbar": false,
+          "allow_symbol_change": true,
+          "studies": [
+            "RSI@tv-basicstudies"
+          ],
+          "container_id": "tradingview_c7fb0"
+        }
+      );
+    </script>
+  </div> -->
+
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    ; (async () => {
+      try {
+        // let symbol = 'ETH-PERP', candles = await fetch('/cache/ETH-PERP.json').then(r => r.json())
+        // candles = candles.slice(-90 * 24 * 60)
+        const { symbol, candles } = await fetch('.netlify/functions/candles').then(res => res.json())
+
+        const duplicated = candles.map(c => c[0]).filter((e, i, a) => a.indexOf(e) !== i)
+        if (duplicated.length) throw { duplicated }
+
+        const chart = LightweightCharts.createChart(document.body, {
+          // height: 500,
+          layout: {
+            backgroundColor: '#111',
+            textColor: 'rgba(255, 255, 255, 0.9)',
+          },
+          timeScale: {
+            timeVisible: true,
+            secondsVisible: false,
+          },
+          rightPriceScale: {
+            scaleMargins: {
+              bottom: 0.3,
+            },
+          },
+          leftPriceScale: {
+            visible: true,
+            scaleMargins: {
+              top: 0.7,
+              bottom: 0,
+            },
+          },
+          grid: {
+            vertLines: { visible: false },
+            horzLines: { visible: false },
+          },
+        })
+
+        // console.log(candles.length)
+
+        let longs = [], shorts = [], roi = 0, backtest = [], limit
+        candles.slice(121).forEach((candle, i, a) => {
+          const ichimokus = IchimokuCloud.calculate({
+            high: candles.slice(i, i + 121).map(c => c[2]),
+            low: candles.slice(i, i + 121).map(c => c[3]),
+            conversionPeriod: 9,
+            basePeriod: 26,
+            spanPeriod: 52,
+            // displacement: 26,
+          })
+          const ichimoku = ichimokus.pop()
+          ichimoku.spanA = ichimokus[ichimokus.length - 26 + 1].spanA
+          ichimoku.spanB = ichimokus[ichimokus.length - 26 + 1].spanB
+          // ichimoku.lagging = candles[i + 121 + 26 - 1]?.[4]
+          const rsis = RSI.calculate({ period: 14, values: candles.slice(i, i + 121).map(c => c[4]) })
+          const rsi = rsis[rsis.length - 1]
+          // alert(rsis.length) // 107
+          const [origin, o, high, low, close] = candle
+          const [timestamp = Date.now(), open = o] = a[i + 1] || []
+
+          backtest[i] = {
+            time: origin / 1000,
+            rsi,
+            actions: [],
+            roi,
+            ichimoku,
+          }
+
+          if (shorts.length && rsi <= 30) {
+            const delta = 100 - open * 100 / shorts[0] - 0.07 * 2
+            console.log(new Date(timestamp), 'buy', open, Math.round(rsi), (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%')
+            roi += delta
+            shorts.pop()
+            backtest[i].actions.push(['buy', (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%'])
+          }
+          if (longs.length && rsi >= 70) {
+            const delta = open * 100 / longs[0] - 100 - 0.07 * 2
+            console.log(new Date(timestamp), 'sell', open, Math.round(rsi), (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%')
+            roi += delta
+            longs.pop()
+            backtest[i].actions.push(['sell', (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%'])
+          }
+          if (Math.abs(100 * ichimoku.conversion / ichimoku.base - 100) >= 0.5 && rsis.slice(-10).some(r => r >= 80) && shorts.length < 1) {
+            console.log(new Date(timestamp), 'SHORT', open, Math.round(rsi))
+            shorts.push(open)
+            backtest[i].actions.push(['SHORT'])
+            limit = open * 102 / 100
+          }
+          if (100 * ichimoku.conversion / ichimoku.base - 100 >= 0.5 && rsis.slice(-45).some(r => r <= 20) && longs.length < 1) {
+            console.log(new Date(timestamp), 'LONG', open, Math.round(rsi))
+            longs.push(open)
+            backtest[i].actions.push(['LONG'])
+            limit = open * 98 / 100
+          }
+
+          backtest[i].roi = roi
+          if (shorts.length) {
+            const delta = shorts.reduce((acc, short) => acc + 100 - open * 100 / short, 0)
+            backtest[i].roi += delta
+          }
+          if (longs.length) {
+            const delta = longs.reduce((acc, long) => acc + open * 100 / long - 100, 0)
+            backtest[i].roi += delta
+          }
+
+          if (i === a.length - 1) {
+            console.log(roi.toFixed(2) + '%')
+            document.querySelector('span').textContent = `${symbol} (${new Date(candles[0][0]).toLocaleDateString()} - ${new Date(candles[candles.length - 1][0]).toLocaleDateString()}) //// Indicators: RSI + Ichimoku //// Estimated ROI: ${(roi >= 0 ? '+' : '')}${roi.toFixed(2)}%`
+            // document.querySelector('span').style.color = roi >= 0 ? 'rgb(71, 167, 154)' : 'rgb(215, 92, 88)'
+            console.log(new Date(timestamp), new Date(origin), close, rsi)
+          }
+        })
+
+        chart.addLineSeries({
+          lineWidth: 1,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }).setData(backtest.map(({ time, ichimoku }) => ({ time, value: ichimoku.conversion })))
+        chart.addLineSeries({
+          lineWidth: 1,
+          color: 'rgb(215, 92, 88)',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }).setData(backtest.map(({ time, ichimoku }) => ({ time, value: ichimoku.base })))
+        chart.addLineSeries({
+          lineWidth: 1,
+          lineStyle: 1,
+          color: 'rgb(71, 167, 154)',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }).setData(backtest.map(({ time, ichimoku }) => ({ time, value: ichimoku.spanA })))
+        chart.addLineSeries({
+          lineWidth: 1,
+          lineStyle: 1,
+          color: 'orange',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }).setData(backtest.map(({ time, ichimoku }) => ({ time, value: ichimoku.spanB })))
+
+        const series = chart.addCandlestickSeries({
+          lastValueVisible: false,
+          priceLineVisible: false,
+        })
+        const data = candles.map(([timestamp, open, high, low, close, volume]) => ({ time: timestamp / 1000, open, high, low, close }))
+        series.setData(data)
+
+        const lineSeries2 = chart.addLineSeries({
+          priceScaleId: 'left',
+          lineWidth: 1,
+          color: 'rgba(255, 255, 255, 0.7)',
+          lastValueVisible: false,
+          priceLineVisible: false,
+          autoscaleInfoProvider: () => ({
+            priceRange: {
+              minValue: 0,
+              maxValue: 100,
+            },
+          }),
+        })
+        lineSeries2.setData(backtest.map(({ time, rsi }) => ({ time, value: rsi })))
+        lineSeries2.createPriceLine({ price: 80, color: 'rgba(215, 92, 88, 1)', axisLabelVisible: false })
+        lineSeries2.createPriceLine({ price: 70, color: 'rgba(215, 92, 88, 0.5)', axisLabelVisible: false })
+        lineSeries2.createPriceLine({ price: 30, color: 'rgba(71, 167, 154, 0.5)', axisLabelVisible: false })
+        lineSeries2.createPriceLine({ price: 20, color: 'rgba(71, 167, 154, 1)', axisLabelVisible: false })
+
+
+        series.setMarkers(
+          backtest.filter(b => b.actions.length).map(({ time, rsi, actions, roi }) =>
+            actions.map(([action, delta]) => ({
+              time,
+              text: delta ? `${action} (${delta})` : action,
+              position: ['LONG', 'sell'].some(x => action.includes(x)) ? 'belowBar' : 'aboveBar',
+              shape: ['LONG', 'buy'].some(x => action.includes(x)) ? 'arrowUp' : 'arrowDown',
+              color: 'rgba(255, 255, 255, 0.9)',
+            }))
+          ).flat()
+        )
+
+        const lineSeries3 = chart.addBaselineSeries({
+          priceScaleId: 'roi',
+          lineWidth: 1,
+          scaleMargins: {
+            top: 0.05,
+            bottom: 0.85,
+          },
+          priceLineVisible: false,
+        })
+        lineSeries3.setData(backtest.map(b => ({ time: b.time, value: b.roi })))
+
+      } catch (error) {
+        console.error(error)
+        document.querySelector('span').textContent = 'Error.'
+      }
+    })()
+  </script>
+</body>
+
+</html>

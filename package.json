@@ -1,0 +1,22 @@
+{
+  "name": "ftx-trading-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "dependencies": {
+    "@netlify/functions": "^1.0.0",
+    "ccxt": "^1.86.7",
+    "dotenv": "^16.0.1",
+    "technicalindicators": "^3.1.0"
+  },
+  "devDependencies": {
+    "node-schedule": "^2.1.0",
+    "serve": "^13.0.2"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
