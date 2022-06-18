@@ -10,11 +10,19 @@ const exchange = new ccxt.ftx({
 })
 
 ;(async () => {
-  let candles = []
-  // for (let index = 0; index < 6 * 30; index++) {
-  //   candles = [ ...await exchange.fetchOHLCV(process.env.MARKET_SYMBOL, '1m', Date.now() - (1 + index) * 24 * 60 * 60000, 1440), ...candles ]
-  // }
-  // await fs.writeFile(`./${process.env.MARKET_SYMBOL}.json`, JSON.stringify(candles))
+  let candles = [], hourly = []
+  
+  for (let index = 0; index < 6 * 30; index++) {
+    candles = [ ...await exchange.fetchOHLCV(process.env.MARKET_SYMBOL, '1m', Date.now() - (1 + index) * 24 * 60 * 60000, 1440), ...candles ]
+    hourly = [ ...await exchange.fetchOHLCV(process.env.MARKET_SYMBOL, '1h', Date.now() - (1 + index) * 24 * 60 * 60000, 24), ...hourly ]
+  }
+  await fs.mkdir('./cache', { recursive: true })
+  await fs.writeFile(`./cache/${process.env.MARKET_SYMBOL}.json`, JSON.stringify({
+    symbol: process.env.MARKET_SYMBOL,
+    candles,
+    hourly,
+  }))
+  return
   candles = JSON.parse(await fs.readFile(`./${process.env.MARKET_SYMBOL}.json`))
   console.log(candles.length)
   // candles = candles.slice(-90 * 24 * 60)

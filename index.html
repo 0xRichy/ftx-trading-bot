@@ -65,12 +65,12 @@
   <script>
     ; (async () => {
       try {
-        // let symbol = 'ETH-PERP', candles = await fetch('/cache/ETH-PERP.json').then(r => r.json())
-        // candles = candles.slice(-90 * 24 * 60)
-        const { symbol, candles } = await fetch('.netlify/functions/candles').then(res => res.json())
+        // let { symbol, candles, hourly } = await fetch('/cache/ETH-PERP.json').then(r => r.json())
+        // candles = candles.slice(-3 * 30 * 24 * 60)
+        const { symbol, candles, hourly } = await fetch('.netlify/functions/candles').then(res => res.json())
 
         const duplicated = candles.map(c => c[0]).filter((e, i, a) => a.indexOf(e) !== i)
-        if (duplicated.length) throw { duplicated }
+        if (duplicated.length) throw duplicated
 
         const chart = LightweightCharts.createChart(document.body, {
           // height: 500,
@@ -91,7 +91,7 @@
             visible: true,
             scaleMargins: {
               top: 0.7,
-              bottom: 0,
+              bottom: 0.01,
             },
           },
           grid: {
@@ -119,6 +119,13 @@
           const rsis = RSI.calculate({ period: 14, values: candles.slice(i, i + 121).map(c => c[4]) })
           const rsi = rsis[rsis.length - 1]
           // alert(rsis.length) // 107
+          const atrs = ATR.calculate({
+            period: 14,
+            high: hourly.slice(0, Math.ceil((i + 121) / 60)).map(c => c[2]),
+            low: hourly.slice(0, Math.ceil((i + 121) / 60)).map(c => c[3]),
+            close: hourly.slice(0, Math.ceil((i + 121) / 60)).map(c => c[4]),
+          })
+          const atr = atrs.pop() * 100 / ichimoku.base
           const [origin, o, high, low, close] = candle
           const [timestamp = Date.now(), open = o] = a[i + 1] || []
 
@@ -128,29 +135,46 @@
             actions: [],
             roi,
             ichimoku,
+            atr,
           }
 
-          if (shorts.length && rsi <= 30) {
+          if (shorts.length
+            && rsis.slice(-60 + rsis.slice(-60).findIndex(r => r >= 70)).some(r => r <= 30)
+            && 100 * ichimoku.conversion / ichimoku.base - 100 >= atr * 3 / 10
+          ) {
             const delta = 100 - open * 100 / shorts[0] - 0.07 * 2
             console.log(new Date(timestamp), 'buy', open, Math.round(rsi), (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%')
             roi += delta
             shorts.pop()
             backtest[i].actions.push(['buy', (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%'])
           }
-          if (longs.length && rsi >= 70) {
+          if (longs.length && ((
+            rsis.slice(-60 + rsis.slice(-60).findIndex(r => r <= 30)).some(r => r >= 70)
+            && 100 * ichimoku.conversion / ichimoku.base - 100 <= -atr * 3 / 10
+          ) || (
+            rsis.slice(-60 + rsis.slice(-60).findIndex(r => r <= 30)).some(r => r >= 80)
+            && Math.abs(100 * ichimoku.conversion / ichimoku.base - 100) >= atr * 3 / 10
+          ))) {
             const delta = open * 100 / longs[0] - 100 - 0.07 * 2
             console.log(new Date(timestamp), 'sell', open, Math.round(rsi), (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%')
             roi += delta
             longs.pop()
             backtest[i].actions.push(['sell', (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%'])
           }
-          if (Math.abs(100 * ichimoku.conversion / ichimoku.base - 100) >= 0.5 && rsis.slice(-10).some(r => r >= 80) && shorts.length < 1) {
+          
+          if (shorts.length < 1
+            && rsis.slice(-60 + rsis.slice(-60).findIndex(r => r <= 30)).some(r => r >= 80)
+            && Math.abs(100 * ichimoku.conversion / ichimoku.base - 100) >= atr * 3 / 10
+          ) {
             console.log(new Date(timestamp), 'SHORT', open, Math.round(rsi))
             shorts.push(open)
             backtest[i].actions.push(['SHORT'])
             limit = open * 102 / 100
           }
-          if (100 * ichimoku.conversion / ichimoku.base - 100 >= 0.5 && rsis.slice(-45).some(r => r <= 20) && longs.length < 1) {
+          if (longs.length < 1
+            && rsis.slice(-60 + rsis.slice(-60).findIndex(r => r >= 70)).some(r => r <= 20)
+            && 100 * ichimoku.conversion / ichimoku.base - 100 >= atr * 3 / 10
+          ) {
             console.log(new Date(timestamp), 'LONG', open, Math.round(rsi))
             longs.push(open)
             backtest[i].actions.push(['LONG'])
@@ -169,7 +193,7 @@
 
           if (i === a.length - 1) {
             console.log(roi.toFixed(2) + '%')
-            document.querySelector('span').textContent = `${symbol} (${new Date(candles[0][0]).toLocaleDateString()} - ${new Date(candles[candles.length - 1][0]).toLocaleDateString()}) //// Indicators: RSI + Ichimoku //// Estimated ROI: ${(roi >= 0 ? '+' : '')}${roi.toFixed(2)}%`
+            document.querySelector('span').textContent = `${symbol} (${new Date(candles[0][0]).toLocaleDateString()} - ${new Date(candles[candles.length - 1][0]).toLocaleDateString()}) //// Indicators: RSI, Ichimoku, ATR //// Estimated ROI: ${(roi >= 0 ? '+' : '')}${roi.toFixed(2)}%`
             // document.querySelector('span').style.color = roi >= 0 ? 'rgb(71, 167, 154)' : 'rgb(215, 92, 88)'
             console.log(new Date(timestamp), new Date(origin), close, rsi)
           }
@@ -207,7 +231,13 @@
         })
         const data = candles.map(([timestamp, open, high, low, close, volume]) => ({ time: timestamp / 1000, open, high, low, close }))
         series.setData(data)
-
+        
+        chart.addLineSeries({
+          priceScaleId: 'left',
+          lineWidth: 1,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }).setData(backtest.map(({ time, atr }) => ({ time, value: atr })))
         const lineSeries2 = chart.addLineSeries({
           priceScaleId: 'left',
           lineWidth: 1,
